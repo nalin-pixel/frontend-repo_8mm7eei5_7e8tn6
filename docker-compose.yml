@@ -1,0 +1,11 @@
+version: '3.9'
+services:
+  privacy-proxy:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PROXY_WHITELIST=${PROXY_WHITELIST}
+      - CRAWL_TARGETS=${CRAWL_TARGETS}
+      - VITE_BACKEND_URL=/api
+    restart: unless-stopped
