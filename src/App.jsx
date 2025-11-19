@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '/api'
 
 function isHttpUrl(value) {
   try {
@@ -18,6 +18,7 @@ export default function App() {
   const [results, setResults] = useState([])
   const [page, setPage] = useState({ url: '', html: '' })
   const inputRef = useRef(null)
+  const contentRef = useRef(null)
 
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus()
@@ -28,6 +29,7 @@ export default function App() {
     return {
       search: (q) => `${base}/search?q=${encodeURIComponent(q)}&limit=10`,
       proxy: (u) => `${base}/proxy?url=${encodeURIComponent(u)}`,
+      resource: (u) => `${base}/resource?url=${encodeURIComponent(u)}`,
       reset: () => `${base}/session/reset`,
     }
   }, [])
@@ -62,10 +64,15 @@ export default function App() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(api.proxy(u), { credentials: 'omit' })
+      let res = await fetch(api.proxy(u), { credentials: 'omit' })
+      if (!res.ok) {
+        // quick retry once
+        res = await fetch(api.proxy(u), { credentials: 'omit' })
+      }
       if (!res.ok) throw new Error('Proxy fetch failed')
       const data = await res.json()
       setPage({ url: data.url, html: data.html })
+      setResults([])
     } catch (err) {
       setError(err?.message || 'Failed to load page')
     } finally {
@@ -79,6 +86,51 @@ export default function App() {
     } catch {}
     window.location.reload()
   }
+
+  // Intercept clicks inside proxied content for in-app navigation
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+
+    const onClick = (e) => {
+      const a = e.target.closest ? e.target.closest('a[data-proxy-href]') : null
+      if (a) {
+        e.preventDefault()
+        const href = a.getAttribute('data-proxy-href')
+        if (href) openUrl(href)
+      }
+    }
+
+    const onSubmit = (e) => {
+      const form = e.target.closest ? e.target.closest('form') : e.target
+      if (!form) return
+      if (form.matches('form')) {
+        e.preventDefault()
+        const action = form.getAttribute('data-proxy-action') || page.url
+        const method = (form.getAttribute('method') || 'get').toLowerCase()
+        const formData = new FormData(form)
+        if (method === 'get') {
+          const params = new URLSearchParams()
+          for (const [k, v] of formData.entries()) params.append(k, v)
+          const url = action + (action.includes('?') ? '&' : '?') + params.toString()
+          openUrl(url)
+        } else {
+          // For now, treat other methods as GET to keep it safe and simple
+          const params = new URLSearchParams()
+          for (const [k, v] of formData.entries()) params.append(k, v)
+          const url = action + (action.includes('?') ? '&' : '?') + params.toString()
+          openUrl(url)
+        }
+      }
+    }
+
+    el.addEventListener('click', onClick)
+    el.addEventListener('submit', onSubmit)
+    return () => {
+      el.removeEventListener('click', onClick)
+      el.removeEventListener('submit', onSubmit)
+    }
+  }, [page.url])
 
   return (
     <div className="min-h-screen bg-black text-slate-200 font-mono">
@@ -103,15 +155,15 @@ export default function App() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search or type a URL…"
-                  className="w-full h-14 rounded-lg bg-zinc-900/80 border border-white/10 px-4 pr-28 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition duration-400"
+                  className="w-full h-14 rounded-full bg-zinc-900/80 border border-white/10 px-6 pr-36 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition duration-400"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <button
                   type="submit"
-                  className="absolute right-1 top-1 bottom-1 px-4 rounded md:rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors duration-200"
+                  className="absolute right-1 top-1 bottom-1 px-6 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors duration-200"
                 >
-                  {loading ? 'Working…' : 'Go'}
+                  {loading ? 'Working…' : 'Search'}
                 </button>
               </div>
             </form>
@@ -142,6 +194,7 @@ export default function App() {
                 </div>
                 <div className="rounded-lg border border-white/10 bg-zinc-900/60 overflow-hidden min-h-[60vh]">
                   <div
+                    ref={contentRef}
                     className="prose prose-invert max-w-none p-4"
                     dangerouslySetInnerHTML={{ __html: page.html }}
                   />
